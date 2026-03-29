@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Goofy Bubbles</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #ffb703; /* Fallback */
+            font-family: 'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', sans-serif;
+            touch-action: none; /* Prevent pull-to-refresh on mobile */
+            cursor: crosshair;
+        }
+        
+        #bg-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+
+        /* Crazy animated gradient background */
+        .ambient-bg {
+            background: linear-gradient(-45deg, #ff006e, #8338ec, #3a86ff, #ffbe0b, #fb5607);
+            background-size: 400% 400%;
+            animation: gradientBG 5s ease infinite;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .fade-out {
+            opacity: 0;
+            transition: opacity 0.5s ease-out;
+            pointer-events: none;
+        }
+
+        /* Goofy shake animation for the score */
+        @keyframes shake {
+            0% { transform: rotate(0deg); }
+            25% { transform: rotate(-5deg) scale(1.1); }
+            50% { transform: rotate(0deg); }
+            75% { transform: rotate(5deg) scale(1.1); }
+            100% { transform: rotate(0deg); }
+        }
+        .shake {
+            animation: shake 0.2s ease-in-out;
+        }
+    </style>
+</head>
+<body class="text-white select-none">
+
+    <div class="ambient-bg"></div>
+    <canvas id="bg-canvas"></canvas>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- UI Layer -->
+    <div class="absolute top-0 left-0 w-full p-6 z-20 flex justify-between items-start pointer-events-none">
+        <div>
+            <h1 class="text-4xl font-black tracking-tighter text-yellow-300 drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)]" style="-webkit-text-stroke: 1px black;">GOOFY BUBBLES</h1>
+            <p class="text-lg font-bold text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] mt-1">No thinking. Just clicking. Maximum chaos.</p>
+        </div>
+        <div class="text-right">
+            <div class="text-6xl font-black text-white drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)]" id="score-display" style="-webkit-text-stroke: 2px black;">0</div>
+            <div class="text-sm font-bold text-yellow-300 uppercase tracking-widest mt-1 drop-shadow-md">Victims</div>
+        </div>
+    </div>
+
+    <!-- Start Overlay -->
+    <div id="start-overlay" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md transition-opacity duration-500">
+        <div class="text-center max-w-md p-8 bg-gradient-to-br from-pink-500 to-orange-400 rounded-3xl shadow-[0_0_40px_rgba(255,100,100,0.6)] border-4 border-yellow-300 transform rotate-2 hover:rotate-0 transition-transform">
+            <h2 class="text-5xl font-black mb-4 text-white drop-shadow-lg" style="-webkit-text-stroke: 1px black;">BORED? 😴</h2>
+            <p class="text-white mb-8 font-bold text-xl leading-relaxed drop-shadow-md">
+                Let's fix that. <br>
+                Pop the annoying emoji faces. <br>
+                They will scream. They will fart. <br>
+                Show no mercy. 🤡
+            </p>
+            <button id="start-btn" class="px-10 py-5 bg-yellow-400 hover:bg-yellow-300 text-black rounded-2xl font-black text-2xl tracking-wide transition-all transform hover:scale-110 active:scale-90 shadow-[0_8px_0_rgb(180,130,0)] hover:shadow-[0_4px_0_rgb(180,130,0)] hover:translate-y-1">
+                UNLEASH CHAOS!
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d', { alpha: true });
+        
+        const bgCanvas = document.getElementById('bg-canvas');
+        const bgCtx = bgCanvas.getContext('2d', { alpha: true });
+
+        let width, height;
+        let score = 0;
+        let isPlaying = false;
+        
+        const bubbles = [];
+        const particles = [];
+        const ripples = [];
+        
+        const emojis = ['🤪', '🤠', '🤡', '👽', '💩', '👻', '💀', '🤓', '🥸', '🤬', '😱', '🥴', '🥵', '🐷', '🐸'];
+        const speechPhrases = ["Ouch!", "Bruh!", "Yeet!", "Noooo!", "Why?", "Mommy!", "Stop it!", "Hey!"];
+        
+        let audioCtx;
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            bgCanvas.width = width;
+            bgCanvas.height = height;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- Chaotic Audio System ---
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playFunnySound() {
+            if (!audioCtx) return;
+            
+            const rand = Math.random();
+            const now = audioCtx.currentTime;
+
+            // 20% chance for Text-to-Speech
+            if (rand < 0.2 && 'speechSynthesis' in window) {
+                const phrase = speechPhrases[Math.floor(Math.random() * speechPhrases.length)];
+                const utterance = new SpeechSynthesisUtterance(phrase);
+                utterance.pitch = Math.random() * 1.5 + 0.5; // Random high/low voice
+                utterance.rate = Math.random() * 1.5 + 1;    // Fast speech
+                utterance.volume = 0.8;
+                window.speechSynthesis.speak(utterance);
+                return;
+            }
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            if (rand < 0.5) {
+                // Cartoon Boing
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.exponentialRampToValueAtTime(800 + Math.random() * 400, now + 0.3);
+                
+                gainNode.gain.setValueAtTime(0, now);
+                gainNode.gain.linearRampToValueAtTime(0.5, now + 0.05);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (rand < 0.8) {
+                // Pew Pew Laser
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(800 + Math.random() * 400, now);
+                osc.frequency.exponentialRampToValueAtTime(100, now + 0.2);
+                
+                gainNode.gain.setValueAtTime(0.3, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                
+                osc.start(now);
+                osc.stop(now + 0.2);
+            } else {
+                // Synthetic Fart (low sawtooth with quick drop)
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(50 + Math.random() * 30, now);
+                osc.frequency.linearRampToValueAtTime(20, now + 0.2);
+                
+                gainNode.gain.setValueAtTime(0.5, now);
+                // Add some volume "wobble" manually
+                gainNode.gain.linearRampToValueAtTime(0.1, now + 0.05);
+                gainNode.gain.linearRampToValueAtTime(0.4, now + 0.1);
+                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.25);
+                
+                osc.start(now);
+                osc.stop(now + 0.25);
+            }
+        }
+
+        // --- Game Entities ---
+        class Bubble {
+            constructor() {
+                this.radius = Math.random() * 40 + 25; // Bigger bubbles for faces
+                this.x = Math.random() * (width - this.radius * 2) + this.radius;
+                this.y = height + this.radius + Math.random() * 100;
+                
+                // CRAZY SPEED
+                this.speedY = -(Math.random() * 4 + 2) * (50 / this.radius);
+                
+                // Aggressive swaying
+                this.swaySpeed = Math.random() * 0.1 + 0.05;
+                this.swayAmount = Math.random() * 8 + 3;
+                this.swayPhase = Math.random() * Math.PI * 2;
+                
+                // Chaotic colors
+                this.hue = Math.random() * 360; 
+                this.saturation = 100;
+                this.lightness = 60;
+                this.alpha = 0.8;
+
+                // Assign random emoji
+                this.emoji = emojis[Math.floor(Math.random() * emojis.length)];
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.1;
+            }
+
+            update() {
+                this.y += this.speedY;
+                this.x += Math.sin(this.swayPhase) * this.swayAmount;
+                this.swayPhase += this.swaySpeed;
+                this.rotation += this.rotationSpeed;
+                
+                return this.y + this.radius < -50; // Extra buffer to disappear
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // Spastic wobble
+                const stretch = 1 + Math.sin(this.swayPhase * 3) * 0.15;
+                ctx.scale(1/stretch, stretch);
+
+                // Bright solid bubble
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${this.hue}, ${this.saturation}%, ${this.lightness}%, ${this.alpha})`;
+                ctx.fill();
+                
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = `hsl(${this.hue}, 100%, 30%)`; // Dark outline
+                ctx.stroke();
+
+                // Draw Emoji Face
+                ctx.font = `${this.radius * 1.2}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.emoji, 0, 0);
+
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, hue, emoji) {
+                this.x = x;
+                this.y = y;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 8 + 3; // Fast explosion
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.size = Math.random() * 15 + 10;
+                this.hue = hue;
+                this.life = 1.0;
+                this.decay = Math.random() * 0.04 + 0.02;
+                this.gravity = 0.2; // Heavier gravity
+                this.emoji = Math.random() > 0.5 ? emoji : '💥'; // 50% chance to be the face or explosion
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += this.gravity;
+                this.life -= this.decay;
+                return this.life <= 0;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.globalAlpha = this.life;
+                ctx.font = `${this.size}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.emoji, this.x, this.y);
+                ctx.restore();
+            }
+        }
+
+        class Ripple {
+            constructor(x, y, hue) {
+                this.x = x;
+                this.y = y;
+                this.radius = 10;
+                this.hue = hue;
+                this.life = 1.0;
+                this.decay = 0.05; // Fast fade
+                this.growthRate = 10; // Fast grow
+            }
+
+            update() {
+                this.radius += this.growthRate;
+                this.life -= this.decay;
+                return this.life <= 0;
+            }
+
+            draw(ctx) {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = `hsla(${this.hue}, 100%, 50%, ${this.life})`;
+                ctx.lineWidth = 5 * this.life; // Thicker ring that fades
+                ctx.stroke();
+            }
+        }
+
+        // --- Core Functions ---
+        function spawnBubble() {
+            if (Math.random() < 0.08) { // Spawn rate doubled
+                bubbles.push(new Bubble());
+            }
+        }
+
+        function createBurst(x, y, radius, hue, emoji) {
+            const particleCount = Math.floor(radius / 4);
+            for (let i = 0; i < particleCount; i++) {
+                particles.push(new Particle(x, y, hue, emoji));
+            }
+            ripples.push(new Ripple(x, y, hue));
+        }
+
+        function triggerScoreShake() {
+            const scoreElement = document.getElementById('score-display');
+            scoreElement.classList.remove('shake');
+            void scoreElement.offsetWidth; // Trigger reflow
+            scoreElement.classList.add('shake');
+        }
+
+        // --- Interaction ---
+        function handleInteraction(clientX, clientY) {
+            if (!isPlaying) return;
+
+            initAudio();
+
+            let popped = false;
+            for (let i = bubbles.length - 1; i >= 0; i--) {
+                const b = bubbles[i];
+                const dx = clientX - b.x;
+                const dy = clientY - b.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < b.radius + 15) {
+                    createBurst(b.x, b.y, b.radius, b.hue, b.emoji);
+                    playFunnySound();
+                    bubbles.splice(i, 1);
+                    score++;
+                    document.getElementById('score-display').innerText = score;
+                    triggerScoreShake();
+                    popped = true;
+                    
+                    // Frenzy mode: 5% chance popping one spawns 3 more instantly
+                    if(Math.random() < 0.05) {
+                        for(let j=0; j<3; j++) bubbles.push(new Bubble());
+                    }
+                    
+                    break; 
+                }
+            }
+            
+            if (!popped) {
+                ripples.push(new Ripple(clientX, clientY, 0)); // Red ripple on miss
+            }
+        }
+
+        canvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            handleInteraction(e.clientX, e.clientY);
+        });
+
+        // Add swipe/drag popping capability for maximum chaos
+        canvas.addEventListener('pointermove', (e) => {
+            if(e.buttons > 0) { // If mouse/finger is held down
+                 e.preventDefault();
+                 handleInteraction(e.clientX, e.clientY);
+            }
+        });
+
+        // --- Game Loop ---
+        function animate() {
+            if (!isPlaying) return;
+
+            ctx.clearRect(0, 0, width, height);
+            bgCtx.clearRect(0, 0, width, height);
+
+            spawnBubble();
+
+            for (let i = ripples.length - 1; i >= 0; i--) {
+                const isDead = ripples[i].update();
+                ripples[i].draw(bgCtx);
+                if (isDead) ripples.splice(i, 1);
+            }
+
+            for (let i = bubbles.length - 1; i >= 0; i--) {
+                const isDead = bubbles[i].update();
+                bubbles[i].draw(ctx);
+                if (isDead) bubbles.splice(i, 1);
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const isDead = particles[i].update();
+                particles[i].draw(ctx);
+                if (isDead) particles.splice(i, 1);
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // --- Startup ---
+        document.getElementById('start-btn').addEventListener('click', () => {
+            initAudio();
+            const overlay = document.getElementById('start-overlay');
+            overlay.classList.add('fade-out');
+            
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                isPlaying = true;
+                
+                for(let i=0; i<12; i++) {
+                    const b = new Bubble();
+                    b.y = Math.random() * height;
+                    bubbles.push(b);
+                }
+
+                animate();
+            }, 500);
+        });
+    </script>
+</body>
+</html>
